@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "PowerShell(node --version)",
+      "WebFetch(domain:mee6.xyz)",
+      "mcp__Claude_in_Chrome__tabs_context_mcp",
+      "PowerShell($headers = @{ \"Accept\" = \"application/json\"; \"User-Agent\" = \"Mozilla/5.0 \\(Windows NT 10.0; Win64; x64\\) AppleWebKit/537.36\" }; try { $response = Invoke-WebRequest -Uri \"https://mee6.xyz/api/plugins/levels/leaderboard/467838334459314187?page=0&limit=100\" -Headers $headers -UseBasicParsing; $response.StatusCode } catch { $_.Exception.Response.StatusCode.value__; $_.Exception.Message })",
+      "WebSearch",
+      "mcp__Claude_in_Chrome__list_connected_browsers",
+      "mcp__Claude_in_Chrome__javascript_tool",
+      "Bash(docker compose *)",
+      "Bash(npx tsx *)",
+      "PowerShell($candidates = @\\(\"C:\\\\Users\\\\KAOS\\\\AppData\\\\Roaming\\\\Docker\\\\settings-store.json\", \"C:\\\\Users\\\\KAOS\\\\AppData\\\\Roaming\\\\Docker\\\\settings.json\"\\); foreach \\($c in $candidates\\) { if \\(Test-Path $c\\) { \"FOUND: $c\" } else { \"missing: $c\" } })"
+    ]
+  }
+}

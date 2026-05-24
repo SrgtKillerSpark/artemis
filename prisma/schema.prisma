@@ -1,0 +1,111 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id        Int      @id @default(autoincrement())
+  discordId String   @unique @map("discord_id")
+  steamId   String?  @map("steam_id")
+  twitchId  String?  @map("twitch_id")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("users")
+}
+
+model GuildSettings {
+  id              Int      @id @default(autoincrement())
+  guildId         String   @unique @map("guild_id")
+  logChannel      String?  @map("log_channel")
+  levelUpChannel  String?  @map("level_up_channel")
+  streamChannel   String?  @map("stream_channel")
+  welcomeChannel  String?  @map("welcome_channel")
+  welcomeMessage  String?  @map("welcome_message")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("guild_settings")
+}
+
+model Warning {
+  id        Int      @id @default(autoincrement())
+  guildId   String   @map("guild_id")
+  userId    String   @map("user_id")
+  modId     String   @map("mod_id")
+  reason    String
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([guildId, userId])
+  @@map("warnings")
+}
+
+model ModAction {
+  id        Int      @id @default(autoincrement())
+  guildId   String   @map("guild_id")
+  action    String
+  userId    String   @map("user_id")
+  modId     String   @map("mod_id")
+  reason    String?
+  duration  Int?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@index([guildId])
+  @@map("mod_actions")
+}
+
+model UserEconomy {
+  id          Int       @id @default(autoincrement())
+  discordId   String    @map("discord_id")
+  guildId     String    @map("guild_id")
+  balance     Int       @default(0)
+  bank        Int       @default(0)
+  lastDaily   DateTime? @map("last_daily")
+  lastWork    DateTime? @map("last_work")
+  totalEarned Int       @default(0) @map("total_earned")
+  totalLost   Int       @default(0) @map("total_lost")
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  @@unique([discordId, guildId])
+  @@index([guildId, balance])
+  @@map("user_economy")
+}
+
+model UserLevel {
+  id            Int       @id @default(autoincrement())
+  discordId     String    @map("discord_id")
+  guildId       String    @map("guild_id")
+  xp            Int       @default(0)
+  level         Int       @default(0)
+  totalMessages Int       @default(0) @map("total_messages")
+  lastXpGain    DateTime? @map("last_xp_gain")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  @@unique([discordId, guildId])
+  @@index([guildId, xp(sort: Desc)])
+  @@map("user_levels")
+}
+
+model TwitchStreamer {
+  id              Int       @id @default(autoincrement())
+  guildId         String    @map("guild_id")
+  twitchLogin     String    @map("twitch_login")
+  twitchId        String    @map("twitch_id")
+  displayName     String    @map("display_name")
+  addedBy         String    @map("added_by")
+  isLive          Boolean   @default(false) @map("is_live")
+  lastNotifiedAt  DateTime? @map("last_notified_at")
+  lastStreamId    String?   @map("last_stream_id")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  @@unique([guildId, twitchLogin])
+  @@index([isLive])
+  @@map("twitch_streamers")
+}
