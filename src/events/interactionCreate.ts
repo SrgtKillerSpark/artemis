@@ -1,14 +1,22 @@
 import { Events, GuildMember, Interaction } from 'discord.js';
+import {
+  getPollState,
+  renderPollButtons,
+  renderPollEmbed,
+  toggleVote,
+} from '../services/polls.js';
 import { logger } from '../utils/logger.js';
 
 export const name = Events.InteractionCreate;
 export const once = false;
 
 export async function execute(interaction: Interaction) {
-  // ── Button interactions (reaction roles, etc.) ──
+  // ── Button interactions (reaction roles, polls, etc.) ──
   if (interaction.isButton()) {
     if (interaction.customId.startsWith('rr_')) {
       await handleReactionRole(interaction);
+    } else if (interaction.customId.startsWith('poll_')) {
+      await handlePollVote(interaction);
     }
     // Blackjack and other game buttons are handled by their own collectors
     return;
@@ -38,6 +46,32 @@ export async function execute(interaction: Interaction) {
     } else {
       await interaction.reply(reply);
     }
+  }
+}
+
+/** Record a vote when a user clicks a poll button, then refresh the poll message. */
+async function handlePollVote(interaction: Interaction) {
+  if (!interaction.isButton()) return;
+
+  // customId is "poll_<pollId>_<optionIdx>"
+  const parts = interaction.customId.split('_');
+  const pollId = parseInt(parts[1], 10);
+  const optionIdx = parseInt(parts[2], 10);
+  if (Number.isNaN(pollId) || Number.isNaN(optionIdx)) return;
+
+  try {
+    await interaction.deferUpdate();
+    await toggleVote(pollId, interaction.user.id, optionIdx);
+
+    const state = await getPollState(pollId);
+    if (!state) return;
+
+    await interaction.editReply({
+      embeds: [renderPollEmbed(state.poll, state.results, state.totalVotes)],
+      components: renderPollButtons(state.poll),
+    });
+  } catch (error) {
+    logger.error({ err: error, pollId, optionIdx }, 'Failed to handle poll vote');
   }
 }
 

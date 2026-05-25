@@ -92,6 +92,40 @@ model UserLevel {
   @@map("user_levels")
 }
 
+model Poll {
+  id          Int       @id @default(autoincrement())
+  guildId     String    @map("guild_id")
+  channelId   String    @map("channel_id")
+  messageId   String    @unique @map("message_id")
+  authorId    String    @map("author_id")
+  question    String
+  options     Json
+  closesAt    DateTime? @map("closes_at")
+  closed      Boolean   @default(false)
+  multiChoice Boolean   @default(false) @map("multi_choice")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  votes       PollVote[]
+
+  @@index([guildId])
+  @@index([closesAt, closed])
+  @@map("polls")
+}
+
+model PollVote {
+  id        Int      @id @default(autoincrement())
+  pollId    Int      @map("poll_id")
+  userId    String   @map("user_id")
+  optionIdx Int      @map("option_idx")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  poll      Poll     @relation(fields: [pollId], references: [id], onDelete: Cascade)
+
+  @@unique([pollId, userId, optionIdx])
+  @@index([pollId])
+  @@map("poll_votes")
+}
+
 model TwitchStreamer {
   id              Int       @id @default(autoincrement())
   guildId         String    @map("guild_id")
