@@ -17,6 +17,12 @@ import {
   searchSteamPlayer,
   steam64ToAccountId,
 } from '../../services/deadlock-api.js';
+import {
+  archetypeForHero,
+  ARCHETYPE_DESCRIPTIONS,
+  ARCHETYPE_LABELS,
+  type HeroArchetype,
+} from '../../services/deadlock-archetypes.js';
 import { createEmbed, errorEmbed, successEmbed } from '../../utils/embed.js';
 import { logger } from '../../utils/logger.js';
 
@@ -63,6 +69,62 @@ export const data = new SlashCommandBuilder()
       .addUserOption((o) =>
         o.setName('user').setDescription('User to look up (defaults to you)'),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('recent')
+      .setDescription("Show a player's recent matches (compact list)")
+      .addUserOption((o) =>
+        o.setName('user').setDescription('User to look up (defaults to you)'),
+      )
+      .addIntegerOption((o) =>
+        o
+          .setName('count')
+          .setDescription('How many matches to show (1-10, default 5)')
+          .setMinValue(1)
+          .setMaxValue(10),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('streak')
+      .setDescription("Show a player's current win or loss streak")
+      .addUserOption((o) =>
+        o.setName('user').setDescription('User to look up (defaults to you)'),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('random')
+      .setDescription('Pick a random hero, optionally filtered by archetype')
+      .addStringOption((o) =>
+        o
+          .setName('archetype')
+          .setDescription('Filter by playstyle archetype')
+          .addChoices(
+            { name: 'Carry', value: 'carry' },
+            { name: 'Tank', value: 'tank' },
+            { name: 'Burst', value: 'burst' },
+            { name: 'Support', value: 'support' },
+            { name: 'Flex', value: 'flex' },
+          ),
+      ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('leaderboard')
+      .setDescription('Top Deadlock players in this server (linked members only)')
+      .addStringOption((o) =>
+        o
+          .setName('sort')
+          .setDescription('How to rank players (default: winrate)')
+          .addChoices(
+            { name: 'Win rate', value: 'winrate' },
+            { name: 'Total wins', value: 'wins' },
+            { name: 'Matches played', value: 'matches' },
+            { name: 'Most recently played', value: 'recent' },
+          ),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -72,6 +134,10 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === 'profile') return handleProfile(interaction);
   if (sub === 'hero') return handleHero(interaction);
   if (sub === 'lastmatch') return handleLastMatch(interaction);
+  if (sub === 'recent') return handleRecent(interaction);
+  if (sub === 'streak') return handleStreak(interaction);
+  if (sub === 'random') return handleRandom(interaction);
+  if (sub === 'leaderboard') return handleLeaderboard(interaction);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -389,4 +455,313 @@ async function handleLastMatch(interaction: ChatInputCommandInteraction) {
       ],
     });
   }
+}
+
+async function handleRecent(interaction: ChatInputCommandInteraction) {
+  const target = interaction.options.getUser('user') ?? interaction.user;
+  const count = interaction.options.getInteger('count') ?? 5;
+  const steam64 = await getSteamIdForDiscord(target.id);
+
+  if (!steam64) {
+    await interaction.reply({
+      embeds: [errorEmbed(notLinkedMessage(target.id === interaction.user.id, target.username))],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+  try {
+    const accountId = steam64ToAccountId(steam64);
+    const [matches, heroes] = await Promise.all([
+      getMatchHistory(accountId, count),
+      getHeroes(),
+    ]);
+
+    if (matches.length === 0) {
+      await interaction.editReply({
+        embeds: [errorEmbed(`No match history for **${target.username}**.`)],
+      });
+      return;
+    }
+
+    const heroById = new Map(heroes.map((h) => [h.id, h]));
+    const lines = matches.map((m) => {
+      const win = m.match_result === m.player_team;
+      const indicator = win ? '🟢' : '🔴';
+      const heroName = heroById.get(m.hero_id)?.name ?? `Hero ${m.hero_id}`;
+      const kda = `${m.player_kills}/${m.player_deaths}/${m.player_assists}`;
+      const duration = formatDuration(m.match_duration_s);
+      return `${indicator} **${heroName}** · \`${kda}\` · ${duration} · <t:${m.start_time}:R>`;
+    });
+
+    const wins = matches.filter((m) => m.match_result === m.player_team).length;
+
+    const embed = createEmbed()
+      .setTitle(`${target.username}'s Recent Matches`)
+      .setDescription(lines.join('\n'))
+      .setFooter({
+        text: `Last ${matches.length} matches · ${wins}W / ${matches.length - wins}L`,
+      });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    logger.warn({ err, steam64 }, 'Failed to fetch recent matches');
+    await interaction.editReply({
+      embeds: [errorEmbed("Couldn't fetch recent matches. Try again in a bit.")],
+    });
+  }
+}
+
+async function handleStreak(interaction: ChatInputCommandInteraction) {
+  const target = interaction.options.getUser('user') ?? interaction.user;
+  const steam64 = await getSteamIdForDiscord(target.id);
+
+  if (!steam64) {
+    await interaction.reply({
+      embeds: [errorEmbed(notLinkedMessage(target.id === interaction.user.id, target.username))],
+      flags: MessageFlags.Ephemeral,
+    });
+    return;
+  }
+
+  await interaction.deferReply();
+  try {
+    const accountId = steam64ToAccountId(steam64);
+    // Pull enough matches to see the end of any reasonable streak
+    const [matches, heroes] = await Promise.all([
+      getMatchHistory(accountId, 30),
+      getHeroes(),
+    ]);
+
+    if (matches.length === 0) {
+      await interaction.editReply({
+        embeds: [errorEmbed(`No match history for **${target.username}**.`)],
+      });
+      return;
+    }
+
+    const heroById = new Map(heroes.map((h) => [h.id, h]));
+
+    // Determine the streak direction from the most recent match
+    const firstWin = matches[0].match_result === matches[0].player_team;
+    let streakLength = 0;
+    for (const m of matches) {
+      const isWin = m.match_result === m.player_team;
+      if (isWin === firstWin) streakLength++;
+      else break;
+    }
+
+    const streakMatches = matches.slice(0, streakLength);
+    const breakerMatch = matches[streakLength]; // may be undefined if streak runs all 30
+
+    const icon = firstWin ? '🔥' : '💀';
+    const verb = firstWin ? 'WIN' : 'LOSS';
+    const checkmark = firstWin ? '✅' : '❌';
+    const color = firstWin ? 0x57f287 : 0xed4245;
+
+    const matchLines = streakMatches.map((m, i) => {
+      const heroName = heroById.get(m.hero_id)?.name ?? `Hero ${m.hero_id}`;
+      const kda = `${m.player_kills}/${m.player_deaths}/${m.player_assists}`;
+      return `${i + 1}. ${checkmark} **${heroName}** · \`${kda}\``;
+    });
+
+    let footer: string;
+    if (breakerMatch) {
+      const heroName =
+        heroById.get(breakerMatch.hero_id)?.name ?? `Hero ${breakerMatch.hero_id}`;
+      footer = `Last ${firstWin ? 'loss' : 'win'}: ${streakLength} game${streakLength === 1 ? '' : 's'} ago as ${heroName}`;
+    } else {
+      footer = `Streak goes back at least ${matches.length} matches`;
+    }
+
+    const embed = createEmbed()
+      .setColor(color)
+      .setTitle(
+        `${icon} ${target.username} is on a ${streakLength}-game ${verb} streak`,
+      )
+      .setDescription(matchLines.join('\n'))
+      .setFooter({ text: footer });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    logger.warn({ err, steam64 }, 'Failed to fetch streak');
+    await interaction.editReply({
+      embeds: [errorEmbed("Couldn't fetch streak data. Try again in a bit.")],
+    });
+  }
+}
+
+async function handleRandom(interaction: ChatInputCommandInteraction) {
+  const archetypeFilter = interaction.options.getString('archetype') as
+    | HeroArchetype
+    | null;
+
+  await interaction.deferReply();
+  try {
+    const heroes = await getHeroes();
+    const selectable = heroes.filter(
+      (h) => h.player_selectable !== false && !h.disabled,
+    );
+
+    const pool = archetypeFilter
+      ? selectable.filter((h) => archetypeForHero(h.name) === archetypeFilter)
+      : selectable;
+
+    if (pool.length === 0) {
+      await interaction.editReply({
+        embeds: [errorEmbed(`No heroes match that archetype.`)],
+      });
+      return;
+    }
+
+    const hero = pool[Math.floor(Math.random() * pool.length)];
+    const archetype = archetypeForHero(hero.name);
+    const archetypeLabel = ARCHETYPE_LABELS[archetype];
+    const archetypeDesc = ARCHETYPE_DESCRIPTIONS[archetype];
+
+    const filterNote = archetypeFilter
+      ? ` (filtered to **${archetypeLabel}**)`
+      : '';
+
+    const embed = createEmbed()
+      .setTitle(`🎲 ${hero.name}`)
+      .setDescription(
+        `**Archetype:** ${archetypeLabel}\n*${archetypeDesc}*${filterNote}`,
+      );
+
+    const portrait =
+      hero.images?.selection_image ??
+      hero.images?.portrait ??
+      hero.images?.icon_hero_card;
+    if (portrait) embed.setImage(portrait);
+
+    if (hero.description?.playstyle) {
+      embed.addFields({ name: 'Playstyle', value: hero.description.playstyle });
+    }
+
+    embed.setFooter({ text: `Pool: ${pool.length} heroes · Pick again with /deadlock random` });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to pick random hero');
+    await interaction.editReply({
+      embeds: [errorEmbed("Couldn't reach the Deadlock API for hero data.")],
+    });
+  }
+}
+
+interface LeaderboardRow {
+  discordId: string;
+  displayName: string;
+  wins: number;
+  losses: number;
+  total: number;
+  winRate: number;
+  lastPlayed: number;
+}
+
+async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
+  if (!interaction.guildId || !interaction.guild) return;
+
+  const sort = (interaction.options.getString('sort') ?? 'winrate') as
+    | 'winrate'
+    | 'wins'
+    | 'matches'
+    | 'recent';
+
+  await interaction.deferReply();
+
+  // Find linked users who are members of THIS guild
+  await interaction.guild.members.fetch().catch(() => null);
+  const memberIds = new Set(interaction.guild.members.cache.keys());
+
+  const allLinked = await db.user.findMany({
+    where: { steamId: { not: null } },
+  });
+  const guildLinked = allLinked.filter((u) => memberIds.has(u.discordId));
+
+  if (guildLinked.length === 0) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          'No one in this server has linked their Steam yet. Use `/deadlock link` to start.',
+        ),
+      ],
+    });
+    return;
+  }
+
+  // Fetch match history for all linked users in parallel
+  const results = await Promise.all(
+    guildLinked.map(async (u): Promise<LeaderboardRow | null> => {
+      try {
+        const accountId = steam64ToAccountId(u.steamId!);
+        const matches = await getMatchHistory(accountId, 20);
+        if (matches.length < 5) return null; // need a minimum sample size
+
+        const wins = matches.filter((m) => m.match_result === m.player_team).length;
+        const total = matches.length;
+        const lastPlayed = Math.max(...matches.map((m) => m.start_time));
+        const member = interaction.guild!.members.cache.get(u.discordId);
+        const displayName = member?.displayName ?? 'Unknown';
+
+        return {
+          discordId: u.discordId,
+          displayName,
+          wins,
+          losses: total - wins,
+          total,
+          winRate: wins / total,
+          lastPlayed,
+        };
+      } catch (err) {
+        logger.debug({ err, discordId: u.discordId }, 'Skipping user in leaderboard');
+        return null;
+      }
+    }),
+  );
+
+  const rows = results.filter((r): r is LeaderboardRow => r !== null);
+
+  if (rows.length === 0) {
+    await interaction.editReply({
+      embeds: [
+        errorEmbed(
+          `${guildLinked.length} member${guildLinked.length === 1 ? '' : 's'} linked, but no one has at least 5 recent matches to rank. Play some games!`,
+        ),
+      ],
+    });
+    return;
+  }
+
+  rows.sort((a, b) => {
+    if (sort === 'wins') return b.wins - a.wins;
+    if (sort === 'matches') return b.total - a.total;
+    if (sort === 'recent') return b.lastPlayed - a.lastPlayed;
+    return b.winRate - a.winRate; // default
+  });
+
+  const top10 = rows.slice(0, 10);
+  const lines = top10.map((r, i) => {
+    const wr = Math.round(r.winRate * 100);
+    const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**#${i + 1}**`;
+    return `${medal} **${r.displayName}** — ${wr}% WR (${r.wins}W/${r.losses}L)`;
+  });
+
+  const sortLabels: Record<string, string> = {
+    winrate: 'win rate',
+    wins: 'total wins',
+    matches: 'matches played',
+    recent: 'most recently played',
+  };
+
+  const embed = createEmbed()
+    .setTitle('🏆 Server Deadlock Leaderboard')
+    .setDescription(lines.join('\n'))
+    .setFooter({
+      text: `Sorted by ${sortLabels[sort]} · ${rows.length} of ${guildLinked.length} linked members qualify · last 20 matches each`,
+    });
+
+  await interaction.editReply({ embeds: [embed] });
 }
