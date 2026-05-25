@@ -7,6 +7,10 @@ const HERO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let heroCache: Hero[] | null = null;
 let heroCacheAt = 0;
 
+const ITEM_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
+let itemCache: Item[] | null = null;
+let itemCacheAt = 0;
+
 export interface SteamSearchResult {
   account_id: number;
   persona_name?: string;
@@ -30,6 +34,23 @@ export interface MatchHistoryEntry {
   last_hits?: number;
   denies?: number;
   team_abandoned?: boolean;
+}
+
+export type ItemSlot = 'weapon' | 'vitality' | 'spirit';
+
+export interface Item {
+  id: number;
+  class_name: string;
+  name: string;
+  item_slot_type?: ItemSlot;
+  item_tier?: number;
+  cost?: number;
+  shop_image?: string;
+  shop_image_webp?: string;
+  heroes?: number[];
+  shopable?: boolean;
+  is_active_item?: boolean;
+  disabled?: boolean | null;
 }
 
 export interface MmrHistoryEntry {
@@ -167,6 +188,27 @@ export async function getHeroes(): Promise<Hero[]> {
 export async function getHeroById(id: number): Promise<Hero | null> {
   const all = await getHeroes();
   return all.find((h) => h.id === id) ?? null;
+}
+
+/** All items including abilities. Filter callers to shop items as needed. */
+export async function getItems(): Promise<Item[]> {
+  if (itemCache && Date.now() - itemCacheAt < ITEM_CACHE_TTL_MS) return itemCache;
+  const items = await dapiJson<Item[]>('/v1/assets/items');
+  itemCache = items;
+  itemCacheAt = Date.now();
+  return items;
+}
+
+/** Shop items only — buyable, no hero restriction, has a slot/tier. */
+export async function getShopItems(): Promise<Item[]> {
+  const all = await getItems();
+  return all.filter(
+    (i) =>
+      i.item_slot_type !== undefined &&
+      i.item_tier !== undefined &&
+      i.disabled !== true &&
+      (i.heroes?.length ?? 0) === 0,
+  );
 }
 
 export async function getHeroByName(name: string): Promise<Hero | null> {

@@ -13,6 +13,9 @@ import {
   getHeroes,
   getMatchHistory,
   getMmrHistory,
+  getShopItems,
+  type Item,
+  type ItemSlot,
   parseSteamInput,
   searchSteamPlayer,
   steam64ToAccountId,
@@ -125,6 +128,23 @@ export const data = new SlashCommandBuilder()
             { name: 'Most recently played', value: 'recent' },
           ),
       ),
+  )
+  .addSubcommand((sub) =>
+    sub
+      .setName('random-build')
+      .setDescription('Generate a random Deadlock build (hero + 12 items)')
+      .addStringOption((o) =>
+        o
+          .setName('archetype')
+          .setDescription('Bias the hero pick toward an archetype')
+          .addChoices(
+            { name: 'Carry', value: 'carry' },
+            { name: 'Tank', value: 'tank' },
+            { name: 'Burst', value: 'burst' },
+            { name: 'Support', value: 'support' },
+            { name: 'Flex', value: 'flex' },
+          ),
+      ),
   );
 
 export async function execute(interaction: ChatInputCommandInteraction) {
@@ -138,6 +158,7 @@ export async function execute(interaction: ChatInputCommandInteraction) {
   if (sub === 'streak') return handleStreak(interaction);
   if (sub === 'random') return handleRandom(interaction);
   if (sub === 'leaderboard') return handleLeaderboard(interaction);
+  if (sub === 'random-build') return handleRandomBuild(interaction);
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
@@ -764,4 +785,108 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
     });
 
   await interaction.editReply({ embeds: [embed] });
+}
+
+const SLOT_HEADINGS: Record<ItemSlot, string> = {
+  weapon: '⚔️ Weapon',
+  vitality: '🛡️ Vitality',
+  spirit: '✨ Spirit',
+};
+
+/** Pick one random item per (slot, tier) combo, distributing tiers 1-4 across each slot. */
+function buildRandomLoadout(items: Item[]): {
+  bySlot: Record<ItemSlot, Item[]>;
+  totalCost: number;
+} {
+  const bySlot: Record<ItemSlot, Item[]> = { weapon: [], vitality: [], spirit: [] };
+  let totalCost = 0;
+
+  const slots: ItemSlot[] = ['weapon', 'vitality', 'spirit'];
+  const tiers = [1, 2, 3, 4];
+
+  for (const slot of slots) {
+    for (const tier of tiers) {
+      const pool = items.filter((i) => i.item_slot_type === slot && i.item_tier === tier);
+      if (pool.length === 0) continue;
+      const pick = pool[Math.floor(Math.random() * pool.length)];
+      bySlot[slot].push(pick);
+      totalCost += pick.cost ?? 0;
+    }
+  }
+
+  return { bySlot, totalCost };
+}
+
+async function handleRandomBuild(interaction: ChatInputCommandInteraction) {
+  const archetypeFilter = interaction.options.getString('archetype') as
+    | HeroArchetype
+    | null;
+
+  await interaction.deferReply();
+  try {
+    const [heroes, items] = await Promise.all([getHeroes(), getShopItems()]);
+
+    // Pick a hero, optionally filtered by archetype
+    const selectable = heroes.filter(
+      (h) => h.player_selectable !== false && !h.disabled,
+    );
+    const heroPool = archetypeFilter
+      ? selectable.filter((h) => archetypeForHero(h.name) === archetypeFilter)
+      : selectable;
+
+    if (heroPool.length === 0) {
+      await interaction.editReply({
+        embeds: [errorEmbed('No heroes match that archetype.')],
+      });
+      return;
+    }
+
+    const hero = heroPool[Math.floor(Math.random() * heroPool.length)];
+    const archetype = archetypeForHero(hero.name);
+
+    // Pick items
+    const { bySlot, totalCost } = buildRandomLoadout(items);
+
+    // Build the embed
+    const embed = createEmbed()
+      .setTitle(`🎲 Random Build — ${hero.name}`)
+      .setDescription(
+        `**Archetype:** ${ARCHETYPE_LABELS[archetype]}\n*${ARCHETYPE_DESCRIPTIONS[archetype]}*`,
+      );
+
+    for (const slot of ['weapon', 'vitality', 'spirit'] as ItemSlot[]) {
+      const slotItems = bySlot[slot];
+      if (slotItems.length === 0) continue;
+
+      const lines = slotItems.map((item) => {
+        const tier = item.item_tier ? `T${item.item_tier}` : '';
+        const cost = item.cost ? `${item.cost.toLocaleString()}` : '';
+        return `**${item.name}** · ${tier} · ${cost}🟧`;
+      });
+
+      embed.addFields({
+        name: SLOT_HEADINGS[slot],
+        value: lines.join('\n'),
+        inline: true,
+      });
+    }
+
+    // Use hero portrait as thumbnail
+    const portrait =
+      hero.images?.icon_hero_card ??
+      hero.images?.portrait ??
+      hero.images?.selection_image;
+    if (portrait) embed.setThumbnail(portrait);
+
+    embed.setFooter({
+      text: `Total: ${totalCost.toLocaleString()} souls · Re-roll with /deadlock random-build`,
+    });
+
+    await interaction.editReply({ embeds: [embed] });
+  } catch (err) {
+    logger.warn({ err }, 'Failed to generate random build');
+    await interaction.editReply({
+      embeds: [errorEmbed("Couldn't reach the Deadlock API for build data.")],
+    });
+  }
 }
