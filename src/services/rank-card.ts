@@ -138,9 +138,11 @@ export async function generateRankCard(data: RankCardData): Promise<Buffer> {
   ctx.fillStyle = COLORS.text;
 
   const name = data.displayName || data.username;
-  const maxNameWidth = contentW - 340;
+  // Clearance from the right-side RANK/LEVEL badges — generous so names
+  // never touch the badge group visually, not just mathematically.
+  const maxNameWidth = contentW - 400;
 
-  const nameSizes = [44, 40, 36, 32, 28, 24];
+  const nameSizes = [44, 42, 40, 36, 32, 28, 24];
   let nameSize = nameSizes[nameSizes.length - 1];
   for (const size of nameSizes) {
     ctx.font = `bold ${size}px sans-serif`;
