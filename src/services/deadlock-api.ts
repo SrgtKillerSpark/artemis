@@ -2,7 +2,6 @@ import { env } from '../config.js';
 
 const STEAM64_BASE = 76561197960265728n;
 const API_BASE = 'https://api.deadlock-api.com';
-const ASSETS_BASE = 'https://assets.deadlock-api.com';
 
 const HERO_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 let heroCache: Hero[] | null = null;
@@ -16,18 +15,31 @@ export interface SteamSearchResult {
 }
 
 export interface MatchHistoryEntry {
+  account_id: number;
   match_id: number;
   hero_id: number;
+  hero_level?: number;
   player_kills: number;
   player_deaths: number;
   player_assists: number;
   net_worth?: number;
   match_duration_s: number;
-  match_result: number; // 1 = win, 0 = loss (for the player's team)
-  player_team: number;
+  match_result: number; // The WINNING team index (0 or 1) — compare to player_team
+  player_team: number; // 0 or 1
   start_time: number; // unix seconds
   last_hits?: number;
   denies?: number;
+  team_abandoned?: boolean;
+}
+
+export interface MmrHistoryEntry {
+  account_id: number;
+  match_id: number;
+  start_time: number;
+  player_score: number;
+  rank: number;
+  division: number;
+  division_tier: number;
 }
 
 export interface Hero {
@@ -99,8 +111,7 @@ function buildHeaders(): Record<string, string> {
 }
 
 function buildUrl(path: string, params?: Record<string, string>): URL {
-  const base = path.startsWith('/v2') ? ASSETS_BASE : API_BASE;
-  const url = new URL(path, base);
+  const url = new URL(path, API_BASE);
   if (params) for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
   return url;
 }
@@ -114,39 +125,36 @@ async function dapiJson<T>(path: string, params?: Record<string, string>): Promi
   return res.json() as Promise<T>;
 }
 
-async function dapiBuffer(path: string, params?: Record<string, string>): Promise<Buffer> {
-  const res = await fetch(buildUrl(path, params), { headers: buildHeaders() });
-  if (!res.ok) {
-    throw new Error(`Deadlock API ${path} → ${res.status}`);
-  }
-  return Buffer.from(await res.arrayBuffer());
-}
-
 // ── Endpoints ─────────────────────────────────────────────────────────────
 
+/** Search for a Steam player by name. Returns empty array if none matched (404). */
 export async function searchSteamPlayer(query: string): Promise<SteamSearchResult[]> {
-  const data = await dapiJson<SteamSearchResult[]>('/v1/players/steam-search', {
-    search_query: query,
-  });
-  return data;
-}
-
-export async function getPlayerCardImage(accountId: string): Promise<Buffer> {
-  return dapiBuffer(`/v1/players/${accountId}/card`);
+  try {
+    return await dapiJson<SteamSearchResult[]>('/v1/players/steam-search', {
+      search_query: query,
+    });
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('→ 404')) return [];
+    throw err;
+  }
 }
 
 export async function getMatchHistory(
   accountId: string,
-  limit = 10,
+  limit = 50,
 ): Promise<MatchHistoryEntry[]> {
   return dapiJson<MatchHistoryEntry[]>(`/v1/players/${accountId}/match-history`, {
     limit: String(limit),
   });
 }
 
+export async function getMmrHistory(accountId: string): Promise<MmrHistoryEntry[]> {
+  return dapiJson<MmrHistoryEntry[]>(`/v1/players/${accountId}/mmr-history`);
+}
+
 export async function getHeroes(): Promise<Hero[]> {
   if (heroCache && Date.now() - heroCacheAt < HERO_CACHE_TTL_MS) return heroCache;
-  const heroes = await dapiJson<Hero[]>('/v2/heroes');
+  const heroes = await dapiJson<Hero[]>('/v1/assets/heroes');
   heroCache = heroes;
   heroCacheAt = Date.now();
   return heroes;
@@ -163,13 +171,10 @@ export async function getHeroByName(name: string): Promise<Hero | null> {
   // Try direct lookup first
   try {
     return await dapiJson<Hero>(
-      `/v2/heroes/by-name/${encodeURIComponent(normalized)}`,
+      `/v1/assets/heroes/by-name/${encodeURIComponent(normalized)}`,
     );
   } catch (err) {
-    if (!(err instanceof Error) || !err.message.includes('404')) {
-      // Real error — surface it
-      throw err;
-    }
+    if (!(err instanceof Error) || !err.message.includes('→ 404')) throw err;
   }
 
   // Fallback: case-insensitive scan through the cached list
@@ -179,4 +184,20 @@ export async function getHeroByName(name: string): Promise<Hero | null> {
     all.find((h) => h.name.toLowerCase().includes(normalized)) ??
     null
   );
+}
+
+// Deadlock rank tier names, indexed by `rank` from MMR history.
+// Source: community wiki / in-game progression display.
+const RANK_NAMES = [
+  'Unranked', 'Initiate', 'Seeker', 'Alchemist', 'Arcanist',
+  'Ritualist', 'Emissary', 'Archon', 'Oracle', 'Phantom',
+  'Ascendant', 'Eternus',
+];
+const DIVISION_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'];
+
+export function formatRank(mmr: MmrHistoryEntry | undefined): string {
+  if (!mmr || mmr.rank === 0) return 'Unranked';
+  const tier = RANK_NAMES[mmr.rank] ?? `Rank ${mmr.rank}`;
+  const division = DIVISION_ROMAN[mmr.division] ?? '';
+  return division ? `${tier} ${division}` : tier;
 }

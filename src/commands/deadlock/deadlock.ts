@@ -1,5 +1,4 @@
 import {
-  AttachmentBuilder,
   ChatInputCommandInteraction,
   MessageFlags,
   SlashCommandBuilder,
@@ -8,10 +7,12 @@ import { db } from '../../db/index.js';
 import {
   accountIdToSteam64,
   extractVanity,
+  formatRank,
   getHeroById,
   getHeroByName,
+  getHeroes,
   getMatchHistory,
-  getPlayerCardImage,
+  getMmrHistory,
   parseSteamInput,
   searchSteamPlayer,
   steam64ToAccountId,
@@ -186,21 +187,94 @@ async function handleProfile(interaction: ChatInputCommandInteraction) {
   await interaction.deferReply();
   try {
     const accountId = steam64ToAccountId(steam64);
-    const card = await getPlayerCardImage(accountId);
-    const attachment = new AttachmentBuilder(card, { name: 'deadlock-card.png' });
-    await interaction.editReply({
-      content: `**${target.username}**'s Deadlock profile:`,
-      files: [attachment],
-    });
+    const [matches, heroes, mmrHistory] = await Promise.all([
+      getMatchHistory(accountId, 50),
+      getHeroes(),
+      getMmrHistory(accountId).catch(() => []),
+    ]);
+
+    if (matches.length === 0) {
+      await interaction.editReply({
+        embeds: [errorEmbed(`**${target.username}** has no Deadlock match history yet.`)],
+      });
+      return;
+    }
+
+    const heroById = new Map(heroes.map((h) => [h.id, h]));
+    let wins = 0;
+    let totalK = 0;
+    let totalD = 0;
+    let totalA = 0;
+    let totalDuration = 0;
+    const heroStats = new Map<number, { count: number; wins: number }>();
+
+    for (const m of matches) {
+      const isWin = m.match_result === m.player_team;
+      if (isWin) wins++;
+      totalK += m.player_kills;
+      totalD += m.player_deaths;
+      totalA += m.player_assists;
+      totalDuration += m.match_duration_s;
+
+      const hs = heroStats.get(m.hero_id) ?? { count: 0, wins: 0 };
+      hs.count++;
+      if (isWin) hs.wins++;
+      heroStats.set(m.hero_id, hs);
+    }
+
+    const total = matches.length;
+    const losses = total - wins;
+    const winRate = Math.round((wins / total) * 100);
+    const avgK = (totalK / total).toFixed(1);
+    const avgD = (totalD / total).toFixed(1);
+    const avgA = (totalA / total).toFixed(1);
+    const kdaRatio = totalD > 0 ? ((totalK + totalA) / totalD).toFixed(2) : '∞';
+    const avgDuration = formatDuration(Math.round(totalDuration / total));
+
+    const topHeroLines = [...heroStats.entries()]
+      .sort((a, b) => b[1].count - a[1].count)
+      .slice(0, 3)
+      .map(([heroId, hs]) => {
+        const name = heroById.get(heroId)?.name ?? `Hero ${heroId}`;
+        const hrWr = Math.round((hs.wins / hs.count) * 100);
+        return `**${name}** — ${hs.count} matches · ${hs.wins}W/${hs.count - hs.wins}L · ${hrWr}%`;
+      });
+
+    // Latest rank (mmr-history is in chronological order, so last entry is current)
+    const latestRank = mmrHistory.length > 0 ? mmrHistory[mmrHistory.length - 1] : undefined;
+    const rankLabel = formatRank(latestRank);
+
+    const embed = createEmbed()
+      .setTitle(`${target.username}'s Deadlock Profile`)
+      .setDescription(
+        `**Rank:** ${rankLabel}\n` +
+          `**Last ${total} matches:** ${wins}W / ${losses}L · **${winRate}%** win rate`,
+      )
+      .addFields(
+        { name: 'Top Heroes', value: topHeroLines.join('\n') || '_none_', inline: false },
+        {
+          name: 'Avg KDA',
+          value: `${avgK} / ${avgD} / ${avgA}\n(${kdaRatio} ratio)`,
+          inline: true,
+        },
+        { name: 'Avg Match', value: avgDuration, inline: true },
+      );
+
+    // Use the most-played hero's icon as thumbnail
+    const topHeroId = [...heroStats.entries()].sort((a, b) => b[1].count - a[1].count)[0]?.[0];
+    const topHero = topHeroId !== undefined ? heroById.get(topHeroId) : undefined;
+    const portrait = topHero?.images?.icon_hero_card ?? topHero?.images?.portrait;
+    if (portrait) embed.setThumbnail(portrait);
+
+    embed.setFooter({ text: `account_id: ${accountId}` });
+
+    await interaction.editReply({ embeds: [embed] });
   } catch (err) {
-    logger.warn({ err, steam64 }, 'Failed to fetch Deadlock profile card');
+    logger.warn({ err, steam64 }, 'Failed to fetch Deadlock profile');
     await interaction.editReply({
       embeds: [
         errorEmbed(
-          `Couldn't fetch profile card. Possible reasons:\n` +
-            `• Steam ID isn't a real Deadlock player\n` +
-            `• Deadlock API is rate-limiting us\n` +
-            `• Their Steam profile is private`,
+          "Couldn't fetch profile. The Deadlock API may be rate-limiting us, or this player has no public match history.",
         ),
       ],
     });
@@ -270,7 +344,7 @@ async function handleLastMatch(interaction: ChatInputCommandInteraction) {
 
     const match = history[0];
     const hero = await getHeroById(match.hero_id);
-    const win = match.match_result === 1;
+    const win = match.match_result === match.player_team;
 
     const embed = createEmbed()
       .setColor(win ? 0x57f287 : 0xed4245)
