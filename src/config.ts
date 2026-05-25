@@ -10,6 +10,8 @@ const envSchema = z.object({
   REDIS_URL: z.string().optional().default(''),
   TWITCH_CLIENT_ID: z.string().optional().default(''),
   TWITCH_CLIENT_SECRET: z.string().optional().default(''),
+  DEADLOCK_API_KEY: z.string().optional().default(''),
+  STEAM_API_KEY: z.string().optional().default(''),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   LOG_LEVEL: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace']).default('info'),
 });

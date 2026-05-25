@@ -34,6 +34,7 @@ function getCategory(name: string): string {
   const gamblingCommands = ['coinflip', 'slots', 'dice', 'blackjack'];
   const levelCommands = ['rank', 'levels'];
   const twitchCommands = ['twitch'];
+  const deadlockCommands = ['deadlock'];
   const utilCommands = ['poll'];
   if (modCommands.includes(name)) return 'Moderation';
   if (adminCommands.includes(name)) return 'Admin';
@@ -41,6 +42,7 @@ function getCategory(name: string): string {
   if (gamblingCommands.includes(name)) return 'Gambling';
   if (levelCommands.includes(name)) return 'Leveling';
   if (twitchCommands.includes(name)) return 'Twitch';
+  if (deadlockCommands.includes(name)) return 'Deadlock';
   if (utilCommands.includes(name)) return 'Utility';
   return 'General';
 }
