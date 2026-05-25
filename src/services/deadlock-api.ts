@@ -241,9 +241,20 @@ const RANK_NAMES = [
 ];
 const DIVISION_ROMAN = ['', 'I', 'II', 'III', 'IV', 'V', 'VI'];
 
+/**
+ * The MMR history fields are confusingly named:
+ * - `division` (1-11) is actually the named tier (Initiate → Eternus)
+ * - `division_tier` (1-6) is the sub-tier (I-VI)
+ * - `rank` is the world leaderboard position (for high-rank players who
+ *   are tracked on the public leaderboard; 0 for everyone else)
+ * - `player_score` is the raw MMR-ish value, monotonic with skill
+ */
 export function formatRank(mmr: MmrHistoryEntry | undefined): string {
-  if (!mmr || mmr.rank === 0) return 'Unranked';
-  const tier = RANK_NAMES[mmr.rank] ?? `Rank ${mmr.rank}`;
-  const division = DIVISION_ROMAN[mmr.division] ?? '';
-  return division ? `${tier} ${division}` : tier;
+  if (!mmr || mmr.division === 0) return 'Unranked';
+  const tier = RANK_NAMES[mmr.division] ?? `Tier ${mmr.division}`;
+  const subtier = DIVISION_ROMAN[mmr.division_tier] ?? '';
+  const tierLabel = subtier ? `${tier} ${subtier}` : tier;
+  // Include world leaderboard position for tracked top players
+  if (mmr.rank > 0) return `${tierLabel} · #${mmr.rank}`;
+  return tierLabel;
 }
