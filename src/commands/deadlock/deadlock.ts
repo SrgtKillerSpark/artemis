@@ -120,8 +120,9 @@ export const data = new SlashCommandBuilder()
       .addStringOption((o) =>
         o
           .setName('sort')
-          .setDescription('How to rank players (default: winrate)')
+          .setDescription('How to rank players (default: in-game rank)')
           .addChoices(
+            { name: 'In-game rank', value: 'rank' },
             { name: 'Win rate', value: 'winrate' },
             { name: 'Total wins', value: 'wins' },
             { name: 'Matches played', value: 'matches' },
@@ -680,12 +681,15 @@ interface LeaderboardRow {
   total: number;
   winRate: number;
   lastPlayed: number;
+  rankScore: number; // player_score from MMR, 0 if unranked
+  rankLabel: string; // "Phantom IV", "Unranked", etc.
 }
 
 async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
   if (!interaction.guildId || !interaction.guild) return;
 
-  const sort = (interaction.options.getString('sort') ?? 'winrate') as
+  const sort = (interaction.options.getString('sort') ?? 'rank') as
+    | 'rank'
     | 'winrate'
     | 'wins'
     | 'matches'
@@ -713,17 +717,25 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
     return;
   }
 
-  // Fetch match history for all linked users in parallel
+  // Fetch match history and MMR history for each linked user in parallel
   const results = await Promise.all(
     guildLinked.map(async (u): Promise<LeaderboardRow | null> => {
       try {
         const accountId = steam64ToAccountId(u.steamId!);
-        const matches = await getMatchHistory(accountId, 20);
-        if (matches.length < 5) return null; // need a minimum sample size
+        const [matches, mmrHistory] = await Promise.all([
+          getMatchHistory(accountId, 20),
+          getMmrHistory(accountId).catch(() => []),
+        ]);
+        if (matches.length < 5) return null;
 
         const wins = matches.filter((m) => m.match_result === m.player_team).length;
         const total = matches.length;
         const lastPlayed = Math.max(...matches.map((m) => m.start_time));
+
+        const latestMmr = mmrHistory.length > 0 ? mmrHistory[mmrHistory.length - 1] : undefined;
+        const rankScore = latestMmr?.player_score ?? 0;
+        const rankLabel = formatRank(latestMmr);
+
         const member = interaction.guild!.members.cache.get(u.discordId);
         const displayName = member?.displayName ?? 'Unknown';
 
@@ -735,6 +747,8 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
           total,
           winRate: wins / total,
           lastPlayed,
+          rankScore,
+          rankLabel,
         };
       } catch (err) {
         logger.debug({ err, discordId: u.discordId }, 'Skipping user in leaderboard');
@@ -757,20 +771,23 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
   }
 
   rows.sort((a, b) => {
+    if (sort === 'winrate') return b.winRate - a.winRate;
     if (sort === 'wins') return b.wins - a.wins;
     if (sort === 'matches') return b.total - a.total;
     if (sort === 'recent') return b.lastPlayed - a.lastPlayed;
-    return b.winRate - a.winRate; // default
+    // default: in-game rank — higher player_score is better, unranked at the bottom
+    return b.rankScore - a.rankScore;
   });
 
   const top10 = rows.slice(0, 10);
   const lines = top10.map((r, i) => {
     const wr = Math.round(r.winRate * 100);
     const medal = i === 0 ? '🥇' : i === 1 ? '🥈' : i === 2 ? '🥉' : `**#${i + 1}**`;
-    return `${medal} **${r.displayName}** — ${wr}% WR (${r.wins}W/${r.losses}L)`;
+    return `${medal} **${r.displayName}** — ${r.rankLabel} · ${wr}% WR (${r.wins}W/${r.losses}L)`;
   });
 
   const sortLabels: Record<string, string> = {
+    rank: 'in-game rank',
     winrate: 'win rate',
     wins: 'total wins',
     matches: 'matches played',
@@ -781,7 +798,7 @@ async function handleLeaderboard(interaction: ChatInputCommandInteraction) {
     .setTitle('🏆 Server Deadlock Leaderboard')
     .setDescription(lines.join('\n'))
     .setFooter({
-      text: `Sorted by ${sortLabels[sort]} · ${rows.length} of ${guildLinked.length} linked members qualify · last 20 matches each`,
+      text: `Sorted by ${sortLabels[sort]} · ${rows.length} of ${guildLinked.length} linked members qualify`,
     });
 
   await interaction.editReply({ embeds: [embed] });
