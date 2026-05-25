@@ -1,4 +1,4 @@
-import { createCanvas, loadImage, GlobalFonts } from '@napi-rs/canvas';
+import { createCanvas, loadImage, type Image, type SKRSContext2D } from '@napi-rs/canvas';
 
 interface RankCardData {
   username: string;
@@ -27,7 +27,7 @@ const COLORS = {
 };
 
 function roundRect(
-  ctx: CanvasRenderingContext2D,
+  ctx: SKRSContext2D,
   x: number,
   y: number,
   w: number,
@@ -44,8 +44,8 @@ function roundRect(
 }
 
 function drawCircularImage(
-  ctx: CanvasRenderingContext2D,
-  img: InstanceType<typeof Image>,
+  ctx: SKRSContext2D,
+  img: Image,
   x: number,
   y: number,
   size: number,

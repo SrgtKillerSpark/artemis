@@ -65,11 +65,12 @@ export async function execute(interaction: ChatInputCommandInteraction) {
     return { embeds: [embed], components: totalPages > 1 ? [row] : [] };
   }
 
-  const msg = await interaction.reply({ ...(await buildPage(page)), withResponse: true });
+  await interaction.reply(await buildPage(page));
 
   if (totalPages <= 1) return;
 
-  const collector = msg.resource.message.createMessageComponentCollector({
+  const message = await interaction.fetchReply();
+  const collector = message.createMessageComponentCollector({
     componentType: ComponentType.Button,
     time: 120_000,
   });

@@ -14,6 +14,8 @@ export async function updateSettings(
   guildId: string,
   data: {
     logChannel?: string | null;
+    levelUpChannel?: string | null;
+    streamChannel?: string | null;
     welcomeChannel?: string | null;
     welcomeMessage?: string | null;
   },

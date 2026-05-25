@@ -26,13 +26,14 @@ export async function execute(message: Message) {
         .setThumbnail(message.author.displayAvatarURL());
 
       const settings = await getSettings(message.guildId);
-      let target = message.channel;
+      let target: typeof message.channel = message.channel;
 
       if (settings.levelUpChannel) {
         const ch = await message.client.channels.fetch(settings.levelUpChannel).catch(() => null);
         if (ch?.type === ChannelType.GuildText) target = ch;
       }
 
+      if (!('send' in target)) return;
       await target.send({ embeds: [embed] });
     }
   } catch (error) {
