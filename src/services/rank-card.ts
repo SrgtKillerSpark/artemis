@@ -132,19 +132,34 @@ export async function generateRankCard(data: RankCardData): Promise<Buffer> {
   const contentX = avatarX + avatarSize + 30;
   const contentW = WIDTH - contentX - 40;
 
-  // Username and display name
+  // Username and display name — step down through sizes until it fits
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = COLORS.text;
-  ctx.font = 'bold 44px sans-serif';
 
   const name = data.displayName || data.username;
-  const nameMetrics = ctx.measureText(name);
-  const maxNameWidth = contentW - 280;
-  if (nameMetrics.width > maxNameWidth) {
-    ctx.font = 'bold 34px sans-serif';
+  const maxNameWidth = contentW - 340;
+
+  const nameSizes = [44, 40, 36, 32, 28, 24];
+  let nameSize = nameSizes[nameSizes.length - 1];
+  for (const size of nameSizes) {
+    ctx.font = `bold ${size}px sans-serif`;
+    if (ctx.measureText(name).width <= maxNameWidth) {
+      nameSize = size;
+      break;
+    }
   }
-  ctx.fillText(name, contentX, 25, maxNameWidth);
+  ctx.font = `bold ${nameSize}px sans-serif`;
+
+  // Truncate with ellipsis if even the smallest size overflows
+  let displayName = name;
+  if (ctx.measureText(displayName).width > maxNameWidth) {
+    while (displayName.length > 0 && ctx.measureText(displayName + '…').width > maxNameWidth) {
+      displayName = displayName.slice(0, -1);
+    }
+    displayName += '…';
+  }
+  ctx.fillText(displayName, contentX, 25);
 
   // Username (if different from display name)
   if (data.displayName && data.displayName !== data.username) {
