@@ -143,9 +143,13 @@ export async function getMatchHistory(
   accountId: string,
   limit = 50,
 ): Promise<MatchHistoryEntry[]> {
-  return dapiJson<MatchHistoryEntry[]>(`/v1/players/${accountId}/match-history`, {
-    limit: String(limit),
-  });
+  // The API currently ignores the `limit` query param and returns everything
+  // it has cached. Slice client-side so callers always get the count they asked for.
+  const matches = await dapiJson<MatchHistoryEntry[]>(
+    `/v1/players/${accountId}/match-history`,
+    { limit: String(limit) },
+  );
+  return matches.slice(0, limit);
 }
 
 export async function getMmrHistory(accountId: string): Promise<MmrHistoryEntry[]> {
