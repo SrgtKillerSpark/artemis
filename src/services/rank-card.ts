@@ -132,17 +132,35 @@ export async function generateRankCard(data: RankCardData): Promise<Buffer> {
   const contentX = avatarX + avatarSize + 30;
   const contentW = WIDTH - contentX - 40;
 
+  // Pre-measure the right-side RANK/LEVEL badge group so we know exactly
+  // where it starts. The group is right-anchored at (WIDTH - 40) and grows
+  // leftward based on digit counts, so its left edge varies with rank/level.
+  const badgeRight = WIDTH - 40;
+  const badgeY = 22;
+  ctx.font = 'bold 56px sans-serif';
+  const levelStr = `${data.level}`;
+  const rankStr = `#${data.rank}`;
+  const levelNumW = ctx.measureText(levelStr).width;
+  const rankNumW = ctx.measureText(rankStr).width;
+  ctx.font = 'bold 24px sans-serif';
+  const levelLabelW = ctx.measureText('LEVEL ').width;
+  const rankLabelW = ctx.measureText('RANK ').width;
+  // Leftmost x of any glyph in the badge group:
+  const badgeGroupLeft =
+    badgeRight - levelNumW - levelLabelW - 28 - rankNumW - rankLabelW;
+
   // Username and display name — step down through sizes until it fits
+  // within (badgeGroupLeft − NAME_BADGE_GAP). The gap is the visible
+  // clearance between the longest possible name and the start of the badges.
   ctx.textAlign = 'left';
   ctx.textBaseline = 'top';
   ctx.fillStyle = COLORS.text;
 
-  const name = data.displayName || data.username;
-  // Clearance from the right-side RANK/LEVEL badges — generous so names
-  // never touch the badge group visually, not just mathematically.
-  const maxNameWidth = contentW - 400;
+  const NAME_BADGE_GAP = 25;
+  const maxNameWidth = badgeGroupLeft - contentX - NAME_BADGE_GAP;
 
-  const nameSizes = [44, 42, 40, 36, 32, 28, 24];
+  const name = data.displayName || data.username;
+  const nameSizes = [44, 42, 40, 38, 36, 32, 28, 24];
   let nameSize = nameSizes[nameSizes.length - 1];
   for (const size of nameSizes) {
     ctx.font = `bold ${size}px sans-serif`;
@@ -170,31 +188,24 @@ export async function generateRankCard(data: RankCardData): Promise<Buffer> {
     ctx.fillText(`@${data.username}`, contentX, 76);
   }
 
-  // Rank and Level badges (top right)
+  // Rank and Level badges (right side) — widths pre-measured above.
   ctx.textAlign = 'right';
-  const badgeY = 22;
-  const badgeRight = WIDTH - 40;
 
   // Level
   ctx.font = 'bold 56px sans-serif';
   ctx.fillStyle = COLORS.accent;
-  const levelStr = `${data.level}`;
   ctx.fillText(levelStr, badgeRight, badgeY);
-  const levelWidth = ctx.measureText(levelStr).width;
   ctx.font = 'bold 24px sans-serif';
   ctx.fillStyle = COLORS.textDim;
-  ctx.fillText('LEVEL ', badgeRight - levelWidth - 4, badgeY + 26);
-  const levelLabelWidth = ctx.measureText('LEVEL ').width;
+  ctx.fillText('LEVEL ', badgeRight - levelNumW - 4, badgeY + 26);
 
   // Rank
   ctx.font = 'bold 56px sans-serif';
   ctx.fillStyle = COLORS.text;
-  const rankStr = `#${data.rank}`;
-  ctx.fillText(rankStr, badgeRight - levelWidth - levelLabelWidth - 24, badgeY);
-  const rankWidth = ctx.measureText(rankStr).width;
+  ctx.fillText(rankStr, badgeRight - levelNumW - levelLabelW - 24, badgeY);
   ctx.font = 'bold 24px sans-serif';
   ctx.fillStyle = COLORS.textDim;
-  ctx.fillText('RANK ', badgeRight - levelWidth - levelLabelWidth - rankWidth - 28, badgeY + 26);
+  ctx.fillText('RANK ', badgeRight - levelNumW - levelLabelW - rankNumW - 28, badgeY + 26);
 
   // Stats row — nudged right toward center of content area
   const statsY = 130;
