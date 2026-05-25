@@ -16,6 +16,7 @@ export async function loadEvents(client: Client) {
   let count = 0;
 
   for (const file of files) {
+    if (file.endsWith('.d.ts')) continue;
     if (!file.endsWith('.ts') && !file.endsWith('.js')) continue;
 
     const filePath = join(dir, file);

@@ -10,6 +10,7 @@ export async function loadCommands(client: Client) {
   const files = await readdir(dir, { recursive: true });
 
   for (const file of files) {
+    if (file.endsWith('.d.ts')) continue;
     if (!file.endsWith('.ts') && !file.endsWith('.js')) continue;
 
     const filePath = join(dir, file);
